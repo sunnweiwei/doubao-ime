@@ -16,7 +16,7 @@ import threading
 import sounddevice as sd
 import Quartz
 
-from doubao_asr import ASRSession, build_request_params
+from doubao_asr import ASRSession, build_request_params, recognize_once
 from typer import LiveTyper, CommitTyper, type_string
 from overlay import OverlayController, setup_app
 
@@ -29,6 +29,8 @@ API_KEY = os.environ.get("DOUBAO_API_KEY", "")  # 不要把 key 写进代码，�
 #   "live"   —（实验）实时增量退格重打。最跟手，但终端里易闪烁/乱码，谨慎用。
 MODE = os.environ.get("DOUBAO_MODE", "final")
 SHOW_OVERLAY = os.environ.get("DOUBAO_OVERLAY", "1") != "0"  # 悬浮实时预览窗
+# final 模式松手后，把整段音频用更准的 nostream 接口重跑一遍作为最终结果
+NOSTREAM_FINAL = os.environ.get("DOUBAO_NOSTREAM_FINAL", "1") != "0"
 HOTKEY_KEYCODE = 61                            # 右 Option。左 Option=58
 ENABLE_TWO_PASS = MODE != "commit"             # 开二遍识别，最终结果更准
 SAMPLE_RATE = 16000
@@ -47,6 +49,7 @@ class App:
         self.overlay = overlay
         self._lock = threading.Lock()
         self._prebuf = []           # ws 未连上前先缓存音频，连上后补发
+        self._all_audio = []        # 本次完整录音，供松手后整段 nostream 重识别
         # 启动时就把麦克风设备开好（保持 stopped），按下时 start() 几乎瞬时
         self.stream = sd.RawInputStream(samplerate=SAMPLE_RATE, channels=1,
                                         dtype="int16", blocksize=BLOCK,
@@ -64,6 +67,7 @@ class App:
     def _audio_cb(self, indata, frames, time_info, status):
         data = bytes(indata)
         with self._lock:
+            self._all_audio.append(data)
             if self.session is not None:
                 self.loop.call_soon_threadsafe(self.session.feed, data)
             else:
@@ -96,6 +100,7 @@ class App:
         self.final_text = ""
         with self._lock:
             self._prebuf = []
+            self._all_audio = []
             self.session = None
         self.stream.start()                     # 立刻开始录音
         if self.overlay:
@@ -142,8 +147,21 @@ class App:
                 await self.session.__aexit__(None, None, None)
                 self.session = None
         if MODE == "final":
-            # 松手后把最终结果一次性填入当前光标处（只追加，绝不退格）
             text = self.final_text or self.latest_text
+            # 松手后把整段音频用更准的 nostream 接口重跑一遍，作为最终结果
+            if NOSTREAM_FINAL:
+                with self._lock:
+                    full = b"".join(self._all_audio)
+                try:
+                    params = build_request_params(enable_two_pass=False)
+                    accurate = await recognize_once(API_KEY, full, params)
+                    if accurate:
+                        text = accurate
+                        if self.overlay:
+                            self.overlay.set_text(text)
+                except Exception as e:
+                    print(f"\n[整段优化失败，用流式结果] {type(e).__name__}: {e}")
+            # 一次性填入当前光标处（只追加，绝不退格）
             if text:
                 type_string(text)
         if self.overlay:

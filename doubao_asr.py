@@ -17,7 +17,9 @@ import uuid
 
 import websockets
 
-URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+URL_STREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+URL_NOSTREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
+URL = URL_STREAM  # 向后兼容
 RESOURCE_ID = "volc.bigasr.sauc.duration"
 
 # ---- 二进制协议常量 ----
@@ -113,6 +115,58 @@ def build_request_params(*, enable_two_pass=False, show_utterances=True,
                   "bits": 16, "channel": 1},
         "request": request,
     }
+
+
+def _auth_headers(api_key):
+    return {
+        "X-Api-Key": api_key,
+        "X-Api-Resource-Id": RESOURCE_ID,
+        "X-Api-Request-Id": str(uuid.uuid4()),
+        "X-Api-Connect-Id": str(uuid.uuid4()),
+    }
+
+
+async def recognize_once(api_key, pcm_bytes, params, timeout=15.0):
+    """把整段音频用流式输入模式 (bigmodel_nostream) 跑一遍，返回最准的文本。
+
+    适合"松手后对整段录音再优化一遍"：准确率比双向流式更高。
+    """
+    chunk = int(16000 * 0.2) * 2
+    ws = await websockets.connect(URL_NOSTREAM,
+                                  additional_headers=_auth_headers(api_key),
+                                  max_size=None)
+    try:
+        await ws.send(_build_full_client(params))
+        await ws.recv()  # 首包确认
+        seq = 1
+        if pcm_bytes:
+            for i in range(0, len(pcm_bytes), chunk):
+                seq += 1
+                piece = pcm_bytes[i:i + chunk]
+                last = i + chunk >= len(pcm_bytes)
+                await ws.send(_build_audio(piece, seq, last))
+        else:
+            await ws.send(_build_audio(b"", seq + 1, True))
+        final_text = ""
+        while True:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            except (asyncio.TimeoutError, websockets.ConnectionClosed):
+                break
+            kind, _seq, flags, body = _parse(raw)
+            if kind == "ERROR":
+                break
+            if kind != "SERVER":
+                continue
+            res = body.get("result") or {}
+            text = res.get("text") if isinstance(res, dict) else None
+            if text:
+                final_text = text
+            if flags & 0b0010:
+                break
+        return final_text
+    finally:
+        await ws.close()
 
 
 class ASRSession:
