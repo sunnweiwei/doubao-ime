@@ -99,8 +99,7 @@ class App:
             self.session = None
         self.stream.start()                     # 立刻开始录音
         if self.overlay:
-            self.overlay.set_text("🎙 …")
-            self.overlay.show()
+            self.overlay.show()                 # 显示"聆听中…"占位
         print(f"\n🎙  录音中（模式={MODE}）...")
         self._connect_handle = asyncio.run_coroutine_threadsafe(
             self._connect(), self.loop)
@@ -110,8 +109,7 @@ class App:
             return
         self.recording = False
         self.stream.stop()                      # 停止录音（设备不关，下次秒开）
-        if self.overlay:
-            self.overlay.set_text((self.latest_text or "") + "  ⏳")
+        # 松手后保留当前文本，等最终结果刷新；不加任何图标
         asyncio.run_coroutine_threadsafe(self._end(), self.loop)
 
     async def _connect(self):
