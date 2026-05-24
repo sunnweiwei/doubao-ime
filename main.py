@@ -17,25 +17,40 @@ import sounddevice as sd
 import Quartz
 
 from doubao_asr import ASRSession, build_request_params
-from typer import LiveTyper, CommitTyper
+from typer import LiveTyper, CommitTyper, type_string
+from overlay import OverlayController, setup_app
 
 # ====== 配置 ======
 API_KEY = os.environ.get("DOUBAO_API_KEY", "")  # 不要把 key 写进代码，用环境变量
-MODE = os.environ.get("DOUBAO_MODE", "live")   # "live"=实时增量(会退格修正)  "commit"=逐句追加(不退格)
+# 填字模式：
+#   "final"  —（默认，推荐）说话过程用悬浮窗实时预览，松手时把最终结果一次性填入。
+#             不闪烁、不出乱码、绝不动你原有文本，是 continue 追加。
+#   "commit" — 每句确认后整句追加，从不退格。说话中即可分句上屏，但按句出字。
+#   "live"   —（实验）实时增量退格重打。最跟手，但终端里易闪烁/乱码，谨慎用。
+MODE = os.environ.get("DOUBAO_MODE", "final")
+SHOW_OVERLAY = os.environ.get("DOUBAO_OVERLAY", "1") != "0"  # 悬浮实时预览窗
 HOTKEY_KEYCODE = 61                            # 右 Option。左 Option=58
-ENABLE_TWO_PASS = MODE == "live"               # live 模式开二遍识别，松手时纠错更准
+ENABLE_TWO_PASS = MODE != "commit"             # 开二遍识别，最终结果更准
 SAMPLE_RATE = 16000
 BLOCK = 1600                                   # 录音回调粒度 100ms
 # ==================
 
 
 class App:
-    def __init__(self):
+    def __init__(self, overlay=None):
         self.loop = asyncio.new_event_loop()
         self.session = None
-        self.stream = None
         self.recording = False
         self.typer = LiveTyper() if MODE == "live" else CommitTyper()
+        self.latest_text = ""
+        self.final_text = ""
+        self.overlay = overlay
+        self._lock = threading.Lock()
+        self._prebuf = []           # ws 未连上前先缓存音频，连上后补发
+        # 启动时就把麦克风设备开好（保持 stopped），按下时 start() 几乎瞬时
+        self.stream = sd.RawInputStream(samplerate=SAMPLE_RATE, channels=1,
+                                        dtype="int16", blocksize=BLOCK,
+                                        callback=self._audio_cb)
 
     # ---- asyncio 后台线程 ----
     def start_loop(self):
@@ -45,12 +60,26 @@ class App:
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
+    # ---- 录音回调（在 PortAudio 线程里执行）----
+    def _audio_cb(self, indata, frames, time_info, status):
+        data = bytes(indata)
+        with self._lock:
+            if self.session is not None:
+                self.loop.call_soon_threadsafe(self.session.feed, data)
+            else:
+                self._prebuf.append(data)
+
     # ---- 识别结果回调（在 loop 线程里执行）----
     def _on_result(self, text, is_final, result):
+        self.latest_text = text
+        if is_final:
+            self.final_text = text
         if MODE == "live":
             self.typer.update(text)
-        else:
+        elif MODE == "commit":
             self.typer.update_from_result(result)
+        if self.overlay:
+            self.overlay.set_text(text)
         tag = "FINAL" if is_final else "..."
         print(f"\r[{tag}] {text}", end="", flush=True)
 
@@ -63,45 +92,64 @@ class App:
             return
         self.recording = True
         self.typer.reset()
+        self.latest_text = ""
+        self.final_text = ""
+        with self._lock:
+            self._prebuf = []
+            self.session = None
+        self.stream.start()                     # 立刻开始录音
+        if self.overlay:
+            self.overlay.set_text("🎙 …")
+            self.overlay.show()
         print(f"\n🎙  录音中（模式={MODE}）...")
-        asyncio.run_coroutine_threadsafe(self._begin(), self.loop)
+        self._connect_handle = asyncio.run_coroutine_threadsafe(
+            self._connect(), self.loop)
 
     def on_release(self):
         if not self.recording:
             return
         self.recording = False
+        self.stream.stop()                      # 停止录音（设备不关，下次秒开）
+        if self.overlay:
+            self.overlay.set_text((self.latest_text or "") + "  ⏳")
         asyncio.run_coroutine_threadsafe(self._end(), self.loop)
 
-    async def _begin(self):
+    async def _connect(self):
+        """并行连接 WebSocket；连上后把按下后缓存的音频补发，再切到实时喂。"""
         params = build_request_params(enable_two_pass=ENABLE_TWO_PASS)
         try:
-            self.session = ASRSession(API_KEY, params, self._on_result, self._on_error)
-            await self.session.__aenter__()
+            session = ASRSession(API_KEY, params, self._on_result, self._on_error)
+            await session.__aenter__()
         except Exception as e:
             print(f"\n[连接失败] {type(e).__name__}: {e}")
-            self.session = None
             return
-
-        def audio_cb(indata, frames, time_info, status):
-            if self.session:
-                self.loop.call_soon_threadsafe(self.session.feed, bytes(indata))
-
-        self.stream = sd.RawInputStream(samplerate=SAMPLE_RATE, channels=1,
-                                        dtype="int16", blocksize=BLOCK,
-                                        callback=audio_cb)
-        self.stream.start()
+        with self._lock:
+            for chunk in self._prebuf:
+                session.feed(chunk)
+            self._prebuf = []
+            self.session = session              # 之后录音回调直接喂 session
 
     async def _end(self):
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
-            self.stream = None
+        # 若松手时 WebSocket 还在连接中（短按），先等它连完并补发缓存音频
+        if getattr(self, "_connect_handle", None):
+            try:
+                await asyncio.wrap_future(self._connect_handle)
+            except Exception:
+                pass
+            self._connect_handle = None
         if self.session:
             try:
                 await self.session.finish()
             finally:
                 await self.session.__aexit__(None, None, None)
                 self.session = None
+        if MODE == "final":
+            # 松手后把最终结果一次性填入当前光标处（只追加，绝不退格）
+            text = self.final_text or self.latest_text
+            if text:
+                type_string(text)
+        if self.overlay:
+            self.overlay.hide()
         print("\n✅ 结束\n")
 
 
@@ -110,7 +158,16 @@ def main():
         print("请先设置环境变量 DOUBAO_API_KEY，例如：\n"
               "  export DOUBAO_API_KEY=你的key\n  python3 main.py")
         return
-    app = App()
+
+    overlay = None
+    if SHOW_OVERLAY:
+        try:
+            setup_app()                     # 初始化 NSApplication（无 Dock 图标）
+            overlay = OverlayController()
+        except Exception as e:
+            print(f"[悬浮窗初始化失败，已禁用预览] {type(e).__name__}: {e}")
+
+    app = App(overlay=overlay)
     app.start_loop()
 
     def tap_cb(proxy, type_, event, refcon):
