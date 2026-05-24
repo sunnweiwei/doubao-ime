@@ -29,8 +29,8 @@ API_KEY = os.environ.get("DOUBAO_API_KEY", "")  # 不要把 key 写进代码，�
 #   "live"   —（实验）实时增量退格重打。最跟手，但终端里易闪烁/乱码，谨慎用。
 MODE = os.environ.get("DOUBAO_MODE", "final")
 SHOW_OVERLAY = os.environ.get("DOUBAO_OVERLAY", "1") != "0"  # 悬浮实时预览窗
-# final 模式松手后，把整段音频用更准的 nostream 接口重跑一遍作为最终结果
-NOSTREAM_FINAL = os.environ.get("DOUBAO_NOSTREAM_FINAL", "1") != "0"
+# final 模式松手后，是否把整段音频用 nostream 接口重跑一遍（更准但更慢，默认关）
+NOSTREAM_FINAL = os.environ.get("DOUBAO_NOSTREAM_FINAL", "0") != "0"
 HOTKEY_KEYCODE = 61                            # 右 Option。左 Option=58
 ENABLE_TWO_PASS = MODE != "commit"             # 开二遍识别，最终结果更准
 SAMPLE_RATE = 16000
