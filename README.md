@@ -41,15 +41,23 @@ python3 main.py
 按住右 Option 说话，松手结束，Ctrl+C 退出。
 想换热键改 `main.py` 里的 `HOTKEY_KEYCODE`（左 Option=58，右 Option=61）。
 
-### 公司电脑 SSL 拦截
+### 证书校验问题
 
-若报 `CERTIFICATE_VERIFY_FAILED ... self-signed certificate in certificate chain`，
-说明公司网络做了 SSL 中间人拦截。二选一：
+若报 `CERTIFICATE_VERIFY_FAILED`（常见于网络环境替换了证书链、而 Python 用的
+是自带证书库不认这些根证书），可让程序信任系统钥匙串里的根证书：
 
 ```bash
-export DOUBAO_CA_BUNDLE=/path/to/公司根证书.pem   # 正规：用公司根证书校验
-export DOUBAO_INSECURE_SSL=1                       # 图省事：跳过证书校验（安全性降低）
+# 1. 导出根证书（含系统钥匙串里额外信任的证书）
+security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain > ~/doubao_ca.pem
+security find-certificate -a -p /Library/Keychains/System.keychain >> ~/doubao_ca.pem
+# 如仍失败，再补登录钥匙串：
+# security find-certificate -a -p ~/Library/Keychains/login.keychain-db >> ~/doubao_ca.pem
+
+# 2. 指定给本工具（证书校验仍开启，安全）
+export DOUBAO_CA_BUNDLE=~/doubao_ca.pem
 ```
+
+应急也可 `export DOUBAO_INSECURE_SSL=1` 跳过证书校验，但会降低安全性，不建议长期使用。
 
 ## 结构
 
