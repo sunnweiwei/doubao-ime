@@ -251,35 +251,52 @@ class ASRSession:
         """线程安全地塞入 PCM 数据（从录音线程调用需用 call_soon_threadsafe）。"""
         self._queue.put_nowait(pcm_bytes)
 
-    async def finish(self):
-        """标记说话结束：发完剩余音频 + 最后一包，等待 receiver 收到最终结果。"""
+    async def finish(self, timeout=5.0):
+        """标记说话结束：发完剩余音频 + 最后一包，等待 receiver 收到最终结果。
+
+        timeout 只约束"松手后等最终结果"这段收尾：连接半死、服务端不回最终包
+        时，超时即放弃，cancel 收发任务，避免 _end 永远卡住（与录音时长无关，
+        录音过程不受任何超时影响）。
+        """
         self._finished.set()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*self._tasks, return_exceptions=True),
+                timeout=timeout)
+        except asyncio.TimeoutError:
+            for t in self._tasks:
+                t.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
 
     async def _sender(self):
         seq = 1
         buf = b""
-        while True:
-            if not self._finished.is_set():
-                try:
-                    buf += await asyncio.wait_for(self._queue.get(), timeout=0.05)
-                except asyncio.TimeoutError:
-                    pass
-            else:
-                # 结束信号：把队列里剩下的都取出来
-                try:
-                    while True:
-                        buf += self._queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-            while len(buf) >= self.CHUNK:
-                seq += 1
-                await self.ws.send(_build_audio(buf[:self.CHUNK], seq, last=False))
-                buf = buf[self.CHUNK:]
-            if self._finished.is_set():
-                seq += 1
-                await self.ws.send(_build_audio(buf, seq, last=True))
-                return
+        try:
+            while True:
+                if not self._finished.is_set():
+                    try:
+                        buf += await asyncio.wait_for(self._queue.get(), timeout=0.05)
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    # 结束信号：把队列里剩下的都取出来
+                    try:
+                        while True:
+                            buf += self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                while len(buf) >= self.CHUNK:
+                    seq += 1
+                    await self.ws.send(_build_audio(buf[:self.CHUNK], seq, last=False))
+                    buf = buf[self.CHUNK:]
+                if self._finished.is_set():
+                    seq += 1
+                    await self.ws.send(_build_audio(buf, seq, last=True))
+                    return
+        except websockets.ConnectionClosed:
+            # 连接被服务端单方面关闭（如 45000081 包超时）：干净退出，
+            # 别卡在对死连接 send，从而拖死 finish() 的 gather。
+            return
 
     async def _receiver(self):
         while True:

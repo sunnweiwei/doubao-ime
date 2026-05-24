@@ -11,6 +11,7 @@
 """
 import asyncio
 import os
+import signal
 import threading
 
 import sounddevice as sd
@@ -258,6 +259,24 @@ def main():
                               Quartz.kCFRunLoopCommonModes)
     Quartz.CGEventTapEnable(tap, True)
 
+    # ---- 让 Ctrl+C 能退出 ----
+    # CFRunLoopRun() 是阻塞的 C 调用，期间 Python 不会处理信号，所以原来的
+    # except KeyboardInterrupt 永远进不去。两步解决：
+    #   1) SIGINT handler 调 CFRunLoopStop，让 runloop 返回；
+    #   2) 挂一个周期性 timer 定期唤醒 runloop，给 Python 一个执行点去跑
+    #      已挂起的信号处理函数（否则 handler 自己也没机会被调用）。
+    runloop = Quartz.CFRunLoopGetCurrent()
+
+    def _stop(*_):
+        Quartz.CFRunLoopStop(runloop)
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    wake_timer = Quartz.CFRunLoopTimerCreate(
+        None, Quartz.CFAbsoluteTimeGetCurrent(), 0.2, 0, 0,
+        lambda *_: None, None)
+    Quartz.CFRunLoopAddTimer(runloop, wake_timer, Quartz.kCFRunLoopCommonModes)
+
     print("=" * 48)
     print("  豆包语音输入已启动")
     print(f"  模式: {MODE}    热键: 右 Option (keycode {HOTKEY_KEYCODE})")
@@ -266,7 +285,14 @@ def main():
     try:
         Quartz.CFRunLoopRun()
     except KeyboardInterrupt:
-        print("\n再见。")
+        pass
+    finally:
+        try:
+            app.stream.close()
+        except Exception:
+            pass
+        Quartz.CGEventTapEnable(tap, False)
+    print("\n再见。")
 
 
 if __name__ == "__main__":
