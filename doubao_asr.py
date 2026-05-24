@@ -32,13 +32,18 @@ def _ssl_context():
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         return ctx
+    ctx = ssl.create_default_context()
+    # 优先用 certifi 的公认根证书库，避免某些 Python（如 python.org 版）缺根证书
+    try:
+        import certifi
+        ctx.load_verify_locations(certifi.where())
+    except ImportError:
+        pass
     ca = os.environ.get("DOUBAO_CA_BUNDLE")
     if ca:
-        # 在系统默认证书库之上，追加用户提供的根证书
-        ctx = ssl.create_default_context()
+        # 在公认根证书之上，追加用户提供的根证书（如内网代理根证书）
         ctx.load_verify_locations(os.path.expanduser(ca))
-        return ctx
-    return None  # 用 websockets 默认上下文
+    return ctx
 
 URL_STREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 URL_NOSTREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"

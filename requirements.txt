@@ -1,4 +1,5 @@
 websockets
+certifi
 sounddevice
 pyobjc-framework-Quartz
 pyobjc-framework-Cocoa
