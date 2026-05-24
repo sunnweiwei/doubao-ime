@@ -24,6 +24,8 @@ BOTTOM_MARGIN = int(os.environ.get("DOUBAO_OVERLAY_BOTTOM", "90"))
 FONT_SIZE = int(os.environ.get("DOUBAO_OVERLAY_FONT", "18"))
 PAD_X = 22          # 文字左右内边距
 HEIGHT = round(FONT_SIZE * 2.4)
+LABEL_H = round(FONT_SIZE * 1.5)        # 单行文字高度，用于垂直居中
+LABEL_Y = round((HEIGHT - LABEL_H) / 2.0)
 MIN_W = 120
 PLACEHOLDER = "聆听中…"
 
@@ -54,7 +56,7 @@ class Overlay(NSObject):
         layer.setCornerRadius_(HEIGHT / 2.0)     # 胶囊圆角
 
         label = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(PAD_X, 0, MIN_W - 2 * PAD_X, HEIGHT))
+            NSMakeRect(PAD_X, LABEL_Y, MIN_W - 2 * PAD_X, LABEL_H))
         label.setBezeled_(False)
         label.setDrawsBackground_(False)
         label.setEditable_(False)
@@ -80,7 +82,7 @@ class Overlay(NSObject):
         x = (scr.size.width - w) / 2.0
         y = BOTTOM_MARGIN
         self._panel.setFrame_display_(NSMakeRect(x, y, w, HEIGHT), True)
-        self._label.setFrame_(NSMakeRect(PAD_X, 0, w - 2 * PAD_X, HEIGHT))
+        self._label.setFrame_(NSMakeRect(PAD_X, LABEL_Y, w - 2 * PAD_X, LABEL_H))
 
     # 下面这些方法只在主线程被调用（经 performSelectorOnMainThread）
     def setText_(self, s):
