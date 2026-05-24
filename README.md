@@ -41,6 +41,16 @@ python3 main.py
 按住右 Option 说话，松手结束，Ctrl+C 退出。
 想换热键改 `main.py` 里的 `HOTKEY_KEYCODE`（左 Option=58，右 Option=61）。
 
+### 公司电脑 SSL 拦截
+
+若报 `CERTIFICATE_VERIFY_FAILED ... self-signed certificate in certificate chain`，
+说明公司网络做了 SSL 中间人拦截。二选一：
+
+```bash
+export DOUBAO_CA_BUNDLE=/path/to/公司根证书.pem   # 正规：用公司根证书校验
+export DOUBAO_INSECURE_SSL=1                       # 图省事：跳过证书校验（安全性降低）
+```
+
 ## 结构
 
 - `doubao_asr.py` — 豆包 ASR WebSocket 客户端，封装二进制协议（gzip+JSON），异步流式接口。

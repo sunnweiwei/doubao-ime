@@ -12,10 +12,30 @@
 import asyncio
 import gzip
 import json
+import os
+import ssl
 import struct
 import uuid
 
 import websockets
+
+
+def _ssl_context():
+    """构造 SSL 上下文。
+
+    DOUBAO_CA_BUNDLE  指向公司根证书 (PEM)，正规做法。
+    DOUBAO_INSECURE_SSL=1  跳过证书校验（公司 SSL 拦截时图省事用，安全性降低）。
+    默认走系统默认校验。
+    """
+    ca = os.environ.get("DOUBAO_CA_BUNDLE")
+    if ca:
+        return ssl.create_default_context(cafile=ca)
+    if os.environ.get("DOUBAO_INSECURE_SSL", "0") != "0":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None  # 用 websockets 默认上下文
 
 URL_STREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 URL_NOSTREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
@@ -135,7 +155,7 @@ async def recognize_once(api_key, pcm_bytes, params, timeout=15.0):
     chunk = int(16000 * 0.2) * 2
     ws = await websockets.connect(URL_NOSTREAM,
                                   additional_headers=_auth_headers(api_key),
-                                  max_size=None)
+                                  max_size=None, ssl=_ssl_context())
     try:
         await ws.send(_build_full_client(params))
         await ws.recv()  # 首包确认
@@ -201,7 +221,7 @@ class ASRSession:
             "X-Api-Connect-Id": str(uuid.uuid4()),
         }
         self.ws = await websockets.connect(URL, additional_headers=headers,
-                                           max_size=None)
+                                           max_size=None, ssl=_ssl_context())
         self.logid = self.ws.response.headers.get("X-Tt-Logid")
         await self.ws.send(_build_full_client(self.params))
         await self.ws.recv()  # 首包确认
