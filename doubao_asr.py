@@ -236,7 +236,7 @@ class ASRSession:
             self.ws = await connect_warm(self.api_key)
         self.logid = self.ws.response.headers.get("X-Tt-Logid")
         await self.ws.send(_build_full_client(self.params))
-        await self.ws.recv()  # 首包确认
+        # 不空等首包确认：直接起收发任务，立刻开始推音频（首包无文本，由 receiver 忽略）
         self._tasks = [asyncio.create_task(self._sender()),
                        asyncio.create_task(self._receiver())]
         return self

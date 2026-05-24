@@ -64,6 +64,8 @@ class App:
 
     def _run_loop(self):
         asyncio.set_event_loop(self.loop)
+        if WARM_CONN:
+            self.loop.create_task(self._rewarm())   # 启动即预热，首次使用也快
         self.loop.run_forever()
 
     # ---- 预热连接：用完即弃、懒维持 ----
