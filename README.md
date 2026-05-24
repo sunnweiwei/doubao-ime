@@ -41,23 +41,26 @@ python3 main.py
 按住右 Option 说话，松手结束，Ctrl+C 退出。
 想换热键改 `main.py` 里的 `HOTKEY_KEYCODE`（左 Option=58，右 Option=61）。
 
-### 证书校验问题
+### 证书校验问题（CERTIFICATE_VERIFY_FAILED）
 
-若报 `CERTIFICATE_VERIFY_FAILED`（常见于网络环境替换了证书链、而 Python 用的
-是自带证书库不认这些根证书），可让程序信任系统钥匙串里的根证书：
+最常见的原因是 **Python 缺少根证书库**——典型是 python.org 版的 Python 装完
+没装证书，导致它验证不了任何 HTTPS（即便证书完全合法）。两种解决：
 
 ```bash
-# 1. 导出根证书（含系统钥匙串里额外信任的证书）
-security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain > ~/doubao_ca.pem
-security find-certificate -a -p /Library/Keychains/System.keychain >> ~/doubao_ca.pem
-# 如仍失败，再补登录钥匙串：
-# security find-certificate -a -p ~/Library/Keychains/login.keychain-db >> ~/doubao_ca.pem
+# 方案一：装 certifi（已在 requirements.txt 里，本工具会优先使用它）
+python3 -m pip install -r requirements.txt
 
-# 2. 指定给本工具（证书校验仍开启，安全）
-export DOUBAO_CA_BUNDLE=~/doubao_ca.pem
+# 方案二（python.org 版 Python）：运行自带的证书安装脚本，例如
+/Applications/Python\ 3.x/Install\ Certificates.command
 ```
 
-应急也可 `export DOUBAO_INSECURE_SSL=1` 跳过证书校验，但会降低安全性，不建议长期使用。
+如果你的网络环境用了**自建根证书的代理**（少数受管控网络），再额外指定该根证书：
+
+```bash
+export DOUBAO_CA_BUNDLE=/path/to/根证书.pem        # 在公认根证书之上追加，校验仍开启
+```
+
+应急可 `export DOUBAO_INSECURE_SSL=1` 跳过校验，但会降低安全性，不建议长期使用。
 
 ## 结构
 
