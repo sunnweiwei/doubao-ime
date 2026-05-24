@@ -8,6 +8,7 @@
   DOUBAO_OVERLAY_BOTTOM  距屏幕底部的像素（默认 90；想贴 Dock 设小一点，如 12）
   DOUBAO_OVERLAY_FONT    字号（默认 18）
 """
+import math
 import os
 
 import objc
@@ -78,7 +79,10 @@ class Overlay(NSObject):
         self._max_w = scr.size.width - 240
         measured = NSString.stringWithString_(text or "").sizeWithAttributes_(
             {NSFontAttributeName: self._font}).width
-        w = max(MIN_W, min(self._max_w, measured + 2 * PAD_X + 6))
+        # 向上取整并留足余量：sizeWithAttributes 只算纯文字宽度，NSTextField
+        # 的 cell 左右还有几像素内边距，余量太小会让 head 截断误触发（首字变 …）。
+        measured = math.ceil(measured) + 16
+        w = max(MIN_W, min(self._max_w, measured + 2 * PAD_X))
         x = (scr.size.width - w) / 2.0
         y = BOTTOM_MARGIN
         self._panel.setFrame_display_(NSMakeRect(x, y, w, HEIGHT), True)

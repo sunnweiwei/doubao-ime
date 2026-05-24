@@ -11,8 +11,10 @@
 """
 import asyncio
 import os
+import shutil
 import signal
 import threading
+import unicodedata
 
 import sounddevice as sd
 import Quartz
@@ -39,6 +41,30 @@ SAMPLE_RATE = 16000
 BLOCK = 1600                                   # 录音回调粒度 100ms
 WARM_CONN = os.environ.get("DOUBAO_WARM_CONN", "1") != "0"  # 预热连接，消除按下时的握手延迟
 # ==================
+
+
+def _disp_width(s):
+    """终端显示宽度：CJK 全角字符按 2 列算。"""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+               for c in s)
+
+
+def _truncate_tail(s, max_w):
+    """保留尾部、使显示宽度不超过 max_w；截掉的部分在前面用 … 标记。
+
+    实时识别时最新的字在末尾，保留尾部比保留头部更有用。
+    """
+    if _disp_width(s) <= max_w:
+        return s
+    out = []
+    w = 0
+    for c in reversed(s):
+        cw = 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+        if w + cw > max_w - 1:          # 给前导 … 留 1 列
+            break
+        out.append(c)
+        w += cw
+    return "…" + "".join(reversed(out))
 
 
 class App:
@@ -111,7 +137,15 @@ class App:
         if self.overlay:
             self.overlay.set_text(text)
         tag = "FINAL" if is_final else "..."
-        print(f"\r[{tag}] {text}", end="", flush=True)
+        prefix = f"[{tag}] "
+        cols = shutil.get_terminal_size((80, 20)).columns
+        # 实时预览截断到单行宽度内，避免长句折行后 \r 清不掉造成刷屏；
+        # FINAL 完整保留并换行，永久留在 log 里。
+        if is_final:
+            print(f"\r\033[K{prefix}{text}", flush=True)
+        else:
+            body = _truncate_tail(text, max(10, cols - _disp_width(prefix) - 1))
+            print(f"\r\033[K{prefix}{body}", end="", flush=True)
 
     def _on_error(self, code, msg):
         print(f"\n[ASR ERROR {code}] {msg}")
