@@ -147,6 +147,9 @@ class App:
         params = build_request_params(enable_two_pass=ENABLE_TWO_PASS,
                                       enable_ddc=ENABLE_DDC)
         warm = self._take_warm()
+        # 会话一建立就并行准备下一条预热连接：你说话的几秒里它已就绪，
+        # 即使松手后立刻再按也能拿到 warm（届时会同时存在两条连接）。
+        self.loop.create_task(self._rewarm())
         try:
             session = ASRSession(API_KEY, params, self._on_result,
                                  self._on_error, ws=warm)
