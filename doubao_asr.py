@@ -20,7 +20,8 @@ import websockets
 URL_STREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 URL_NOSTREAM = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
 URL = URL_STREAM  # 向后兼容
-RESOURCE_ID = "volc.bigasr.sauc.duration"
+# ASR 2.0（seedasr，小时版）。1.0 为 volc.bigasr.sauc.duration
+RESOURCE_ID = "volc.seedasr.sauc.duration"
 
 # ---- 二进制协议常量 ----
 PROTOCOL_VERSION = 0b0001
