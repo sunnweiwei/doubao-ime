@@ -31,8 +31,9 @@ MODE = os.environ.get("DOUBAO_MODE", "final")
 SHOW_OVERLAY = os.environ.get("DOUBAO_OVERLAY", "1") != "0"  # 悬浮实时预览窗
 # final 模式松手后，是否把整段音频用 nostream 接口重跑一遍（更准但更慢，默认关）
 NOSTREAM_FINAL = os.environ.get("DOUBAO_NOSTREAM_FINAL", "0") != "0"
+ENABLE_DDC = os.environ.get("DOUBAO_DDC", "1") != "0"  # 语义顺滑：去掉「嗯」「那个」等语气词
 HOTKEY_KEYCODE = 61                            # 右 Option。左 Option=58
-ENABLE_TWO_PASS = MODE != "commit"             # 开二遍识别，最终结果更准
+ENABLE_TWO_PASS = MODE != "commit"             # 逐句二遍识别（快），最终结果更准
 SAMPLE_RATE = 16000
 BLOCK = 1600                                   # 录音回调粒度 100ms
 WARM_CONN = os.environ.get("DOUBAO_WARM_CONN", "1") != "0"  # 预热连接，消除按下时的握手延迟
@@ -141,7 +142,8 @@ class App:
 
     async def _connect(self):
         """并行连接 WebSocket；连上后把按下后缓存的音频补发，再切到实时喂。"""
-        params = build_request_params(enable_two_pass=ENABLE_TWO_PASS)
+        params = build_request_params(enable_two_pass=ENABLE_TWO_PASS,
+                                      enable_ddc=ENABLE_DDC)
         warm = self._take_warm()
         try:
             session = ASRSession(API_KEY, params, self._on_result,
@@ -187,7 +189,8 @@ class App:
                 with self._lock:
                     full = b"".join(self._all_audio)
                 try:
-                    params = build_request_params(enable_two_pass=False)
+                    params = build_request_params(enable_two_pass=False,
+                                                  enable_ddc=ENABLE_DDC)
                     accurate = await recognize_once(API_KEY, full, params)
                     if accurate:
                         text = accurate

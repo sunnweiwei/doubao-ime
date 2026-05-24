@@ -42,6 +42,7 @@ python3 main.py
 |---|---|---|
 | `DOUBAO_API_KEY` | — | 必填，火山引擎新版控制台的 X-Api-Key |
 | `DOUBAO_MODE` | `final` | 填字模式，见下 |
+| `DOUBAO_DDC` | `1` | 语义顺滑：自动去掉「嗯」「那个」等语气词；设 `0` 关闭 |
 | `DOUBAO_OVERLAY` | `1` | 设 `0` 关闭悬浮预览窗 |
 | `DOUBAO_OVERLAY_BOTTOM` | `90` | 悬浮窗距屏幕底部像素 |
 | `DOUBAO_OVERLAY_FONT` | `18` | 悬浮窗字号 |
