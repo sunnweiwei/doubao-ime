@@ -27,13 +27,16 @@ def _ssl_context():
     DOUBAO_INSECURE_SSL=1  跳过证书校验（公司 SSL 拦截时图省事用，安全性降低）。
     默认走系统默认校验。
     """
-    ca = os.environ.get("DOUBAO_CA_BUNDLE")
-    if ca:
-        return ssl.create_default_context(cafile=ca)
     if os.environ.get("DOUBAO_INSECURE_SSL", "0") != "0":
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    ca = os.environ.get("DOUBAO_CA_BUNDLE")
+    if ca:
+        # 在系统默认证书库之上，追加用户提供的根证书
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(os.path.expanduser(ca))
         return ctx
     return None  # 用 websockets 默认上下文
 
