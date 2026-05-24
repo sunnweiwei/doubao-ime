@@ -16,7 +16,7 @@ import threading
 import sounddevice as sd
 import Quartz
 
-from doubao_asr import ASRSession, build_request_params, recognize_once
+from doubao_asr import ASRSession, build_request_params, recognize_once, connect_warm
 from typer import LiveTyper, CommitTyper, type_string
 from overlay import OverlayController, setup_app
 
@@ -35,6 +35,7 @@ HOTKEY_KEYCODE = 61                            # 右 Option。左 Option=58
 ENABLE_TWO_PASS = MODE != "commit"             # 开二遍识别，最终结果更准
 SAMPLE_RATE = 16000
 BLOCK = 1600                                   # 录音回调粒度 100ms
+WARM_CONN = os.environ.get("DOUBAO_WARM_CONN", "1") != "0"  # 预热连接，消除按下时的握手延迟
 # ==================
 
 
@@ -50,6 +51,7 @@ class App:
         self._lock = threading.Lock()
         self._prebuf = []           # ws 未连上前先缓存音频，连上后补发
         self._all_audio = []        # 本次完整录音，供松手后整段 nostream 重识别
+        self._warm_ws = None        # 预热连接（仅 loop 线程访问），靠心跳维持，挂了不重连
         # 启动时就把麦克风设备开好（保持 stopped），按下时 start() 几乎瞬时
         self.stream = sd.RawInputStream(samplerate=SAMPLE_RATE, channels=1,
                                         dtype="int16", blocksize=BLOCK,
@@ -62,6 +64,26 @@ class App:
     def _run_loop(self):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
+
+    # ---- 预热连接：用完即弃、懒维持 ----
+    # 不跑保活循环；每次说完话后备一条带心跳(库自带 ping)的连接给下次用。
+    # 心跳能撑多久就多久，真挂了也不重连；下次按下时它还在就直接用，否则现连一次。
+    def _take_warm(self):
+        """取走预热连接（若仍存活），否则返回 None（调用方现连一条）。"""
+        ws = self._warm_ws
+        self._warm_ws = None
+        if ws is not None and ws.state.name == "OPEN":
+            return ws
+        return None
+
+    async def _rewarm(self):
+        """说完话后备一条新连接给下次用（后台执行，不阻塞）。"""
+        if not WARM_CONN or self._warm_ws is not None:
+            return
+        try:
+            self._warm_ws = await connect_warm(API_KEY)
+        except Exception:
+            self._warm_ws = None
 
     # ---- 录音回调（在 PortAudio 线程里执行）----
     def _audio_cb(self, indata, frames, time_info, status):
@@ -120,12 +142,24 @@ class App:
     async def _connect(self):
         """并行连接 WebSocket；连上后把按下后缓存的音频补发，再切到实时喂。"""
         params = build_request_params(enable_two_pass=ENABLE_TWO_PASS)
+        warm = self._take_warm()
         try:
-            session = ASRSession(API_KEY, params, self._on_result, self._on_error)
+            session = ASRSession(API_KEY, params, self._on_result,
+                                 self._on_error, ws=warm)
             await session.__aenter__()
         except Exception as e:
-            print(f"\n[连接失败] {type(e).__name__}: {e}")
-            return
+            # 预热连接可能已失效，回退到现连一条
+            if warm is not None:
+                try:
+                    session = ASRSession(API_KEY, params, self._on_result,
+                                         self._on_error)
+                    await session.__aenter__()
+                except Exception as e2:
+                    print(f"\n[连接失败] {type(e2).__name__}: {e2}")
+                    return
+            else:
+                print(f"\n[连接失败] {type(e).__name__}: {e}")
+                return
         with self._lock:
             for chunk in self._prebuf:
                 session.feed(chunk)
@@ -167,6 +201,8 @@ class App:
         if self.overlay:
             self.overlay.hide()
         print("\n✅ 结束\n")
+        # 备一条新连接给下次用（后台执行，不阻塞本次收尾）
+        self.loop.create_task(self._rewarm())
 
 
 def main():

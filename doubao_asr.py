@@ -155,6 +155,16 @@ def _auth_headers(api_key):
     }
 
 
+async def connect_warm(api_key):
+    """只建立连接（完成 TLS 握手），不发起会话。
+
+    可在空闲时预先连好，等按下说话时直接复用，省掉 1~2s 握手延迟。
+    服务端会等到发送 full client request 才开始会话计时，闲置连接可保留数十秒。
+    """
+    return await websockets.connect(URL, additional_headers=_auth_headers(api_key),
+                                    max_size=None, ssl=_ssl_context())
+
+
 async def recognize_once(api_key, pcm_bytes, params, timeout=15.0):
     """把整段音频用流式输入模式 (bigmodel_nostream) 跑一遍，返回最准的文本。
 
@@ -210,26 +220,20 @@ class ASRSession:
 
     CHUNK = int(16000 * 0.2) * 2  # 200ms 16k mono s16le = 6400 字节
 
-    def __init__(self, api_key, params, on_result, on_error=None):
+    def __init__(self, api_key, params, on_result, on_error=None, ws=None):
         self.api_key = api_key
         self.params = params
         self.on_result = on_result      # callable(text, is_final)
         self.on_error = on_error
-        self.ws = None
+        self.ws = ws                    # 可传入预热好的连接，省掉握手
         self.logid = None
         self._queue = asyncio.Queue()
         self._finished = asyncio.Event()
         self._tasks = []
 
     async def __aenter__(self):
-        headers = {
-            "X-Api-Key": self.api_key,
-            "X-Api-Resource-Id": RESOURCE_ID,
-            "X-Api-Request-Id": str(uuid.uuid4()),
-            "X-Api-Connect-Id": str(uuid.uuid4()),
-        }
-        self.ws = await websockets.connect(URL, additional_headers=headers,
-                                           max_size=None, ssl=_ssl_context())
+        if self.ws is None:
+            self.ws = await connect_warm(self.api_key)
         self.logid = self.ws.response.headers.get("X-Tt-Logid")
         await self.ws.send(_build_full_client(self.params))
         await self.ws.recv()  # 首包确认
